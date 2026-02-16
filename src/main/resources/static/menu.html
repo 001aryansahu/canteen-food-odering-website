@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Canteen Menu</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 16px; background: #fafafa; }
+    h2 { margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #ddd; padding: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .card h4 { margin: 0 0 8px; }
+    .price { font-weight: bold; margin-bottom: 8px; }
+    .cart { 
+      position: fixed; bottom: 16px; left: 16px; right: 16px;
+      background: #fff; border:1px solid #ddd; 
+      padding: 12px; border-radius: 8px; 
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .cart h3 { margin: 0 0 8px; }
+    .cart-summary { font-size: 14px; margin-bottom: 8px; }
+    button { cursor: pointer; padding: 6px 12px; border: none; border-radius: 4px; background: #3399cc; color: #fff; }
+    button:hover { background: #287aa6; }
+  </style>
+</head>
+<body>
+  <h2>🍽️ Canteen Menu</h2>
+  <div id="menu" class="grid"></div>
+
+  <div class="cart">
+    <h3>Your Cart</h3>
+    <div>ID: <span id="cartId">-</span></div>
+    <div id="cartSummary" class="cart-summary">Cart empty</div>
+    <button id="payBtn">💳 Pay & Place Order</button>
+  </div>
+
+  <!-- Razorpay Checkout -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script>
+    let cartId = null;
+    let localCart = []; // local cart mirror
+
+    // 1️⃣ Create a new cart when page loads
+    async function initCart() {
+      try {
+        const res = await fetch('/api/cart/create', { method: 'POST' });
+        const cart = await res.json();
+        cartId = cart.id;
+        document.getElementById('cartId').textContent = cartId;
+      } catch (err) {
+        alert("❌ Failed to initialize cart");
+        console.error(err);
+      }
+    }
+
+    // 2️⃣ Load menu from backend
+    async function loadMenu() {
+      try {
+        const res = await fetch('/api/products');
+        const items = await res.json();
+        const menuDiv = document.getElementById('menu');
+        menuDiv.innerHTML = '';
+        items.forEach(p => {
+          menuDiv.innerHTML += `
+            <div class="card">
+              <h4>${p.name}</h4>
+              <div class="price">₹${p.price}</div>
+              <button onclick="add(${p.id}, '${p.name}', ${p.price})">➕ Add</button>
+            </div>
+          `;
+        });
+      } catch (err) {
+        alert("❌ Failed to load menu");
+        console.error(err);
+      }
+    }
+
+    // 3️⃣ Add item to cart
+    async function add(productId, name, price) {
+      try {
+        await fetch(`/api/cart/${cartId}/add?productId=${productId}&qty=1`, { method: 'POST' });
+
+        const found = localCart.find(i => i.id === productId);
+        if (found) {
+          found.qty += 1;
+        } else {
+          localCart.push({ id: productId, name, price, qty: 1 });
+        }
+        renderSummary();
+      } catch (err) {
+        alert("❌ Failed to add item to cart");
+        console.error(err);
+      }
+    }
+
+    // 4️⃣ Render cart summary
+    function renderSummary() {
+      const summary = document.getElementById('cartSummary');
+      if (!localCart.length) {
+        summary.textContent = 'Cart empty';
+        return;
+      }
+      let total = 0;
+      const lines = localCart.map(i => {
+        total += i.price * i.qty;
+        return `${i.name} ×${i.qty}`;
+      });
+      summary.textContent = lines.join(', ') + ` | Total ₹${total}`;
+    }
+
+    // 5️⃣ Payment + Order
+    async function pay() {
+      if (!localCart.length) return alert('🛒 Cart is empty');
+
+      try {
+        // compute total
+        let total = localCart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+        const amountPaise = Math.round(total * 100);
+
+        // get Razorpay key & orderId
+        const key = await (await fetch('/api/payments/key')).text();
+        const orderId = await (await fetch(`/api/payments/create?amountPaise=${amountPaise}&receipt=cart-${cartId}`, { method:'POST' })).text();
+
+        const options = {
+          key,
+          amount: amountPaise.toString(),
+          currency: "INR",
+          name: "Canteen",
+          description: "Food Order Payment",
+          order_id: orderId,
+          handler: async function (response){
+            try {
+              const paymentId = response.razorpay_payment_id;
+              const res = await fetch(`/api/orders/create/${cartId}?paymentId=${paymentId}&status=SUCCESS`, { method: 'POST' });
+              const order = await res.json();
+              window.location = `/receipt.html?token=${order.tokenNumber}&orderId=${order.id}`;
+            } catch (err) {
+              alert("❌ Order creation failed");
+              console.error(err);
+            }
+          },
+          prefill: {},
+          theme: { color: "#3399cc" }
+        };
+        const rz = new Razorpay(options);
+        rz.open();
+      } catch (err) {
+        alert("❌ Payment failed to start");
+        console.error(err);
+      }
+    }
+
+    document.getElementById('payBtn').addEventListener('click', pay);
+
+    // 6️⃣ Init everything
+    (async () => { await initCart(); await loadMenu(); })();
+  </script>
+</body>
+</html>

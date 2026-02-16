@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Receipt</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+</head>
+<body>
+  <h2>✅ Payment Success</h2>
+  <p>Order ID: <span id="orderId"></span></p>
+  <p>Token Number: <strong id="token"></strong></p>
+  <p>Status: <strong id="status">PENDING</strong></p>
+  <p>We'll notify you when your order is ready.</p>
+
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <script>
+    const q = new URLSearchParams(location.search);
+    const token = q.get('token');
+    const orderId = q.get('orderId');
+    document.getElementById('token').textContent = token;
+    document.getElementById('orderId').textContent = orderId;
+
+    const socket = new SockJS('/ws');
+    const stomp = Stomp.over(socket);
+    stomp.connect({}, () => {
+      // subscribe to dedicated topic per token
+      stomp.subscribe(`/topic/order-status/${token}`, msg => {
+        document.getElementById('status').textContent = 'COMPLETED';
+        alert(msg.body);
+      });
+    });
+  </script>
+</body>
+</html>

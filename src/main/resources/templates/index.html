@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Canteen Menu</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial; margin: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #ddd; padding: 12px; border-radius: 8px; }
+    .cart { position: fixed; bottom: 16px; left: 16px; right: 16px; background: #fff; border:1px solid #ddd; padding: 10px; border-radius: 8px; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>🍽️ Canteen Menu</h2>
+  <div id="menu" class="grid"></div>
+
+  <div class="cart">
+    <div>Cart ID: <span id="cartId">-</span></div>
+    <div id="cartSummary">Cart empty</div>
+    <button id="placeOrderBtn">Place Order</button>
+  </div>
+
+  <!-- WebSocket libs -->
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+
+  <script>
+    let cartId = null;
+    let localCart = []; // local mirror for summary only
+
+    async function initCart() {
+      const res = await fetch('/api/cart/create', { method: 'POST' });
+      const cart = await res.json();
+      cartId = cart.id;
+      document.getElementById('cartId').textContent = cartId;
+    }
+
+    async function loadMenu() {
+      const res = await fetch('/api/products');
+      const items = await res.json();
+      const menuDiv = document.getElementById('menu');
+      menuDiv.innerHTML = '';
+      items.forEach(p => {
+        menuDiv.innerHTML += `
+          <div class="card">
+            <h4>${p.name}</h4>
+            <div>₹${p.price}</div>
+            <button onclick="add(${p.id}, '${p.name}', ${p.price})">Add</button>
+          </div>
+        `;
+      });
+    }
+
+    async function add(productId, name, price) {
+      const qty = 1;
+      await fetch(`/api/cart/${cartId}/add?productId=${productId}&qty=${qty}`, { method: 'POST' });
+      // update local summary
+      const found = localCart.find(i => i.id === productId);
+      if (found) found.qty += 1; else localCart.push({ id: productId, name, price, qty: 1 });
+      renderSummary();
+    }
+
+    function renderSummary() {
+      if (!localCart.length) { document.getElementById('cartSummary').textContent = 'Cart empty'; return; }
+      let total = 0;
+      const lines = localCart.map(i => {
+        total += i.price * i.qty;
+        return `${i.name} x${i.qty}`;
+      });
+      document.getElementById('cartSummary').textContent = lines.join(', ') + ` | Total ₹${total}`;
+    }
+
+    async function placeOrder() {
+      if (!cartId) return alert('Cart not ready');
+      const res = await fetch(`/api/orders/create/${cartId}`, { method: 'POST' });
+      const order = await res.json();
+      alert(`Order placed! Token #${order.tokenNumber}\nAmount: ₹${order.totalAmount}\nStatus: ${order.status}`);
+      localCart = [];
+      renderSummary();
+    }
+
+    document.getElementById('placeOrderBtn').addEventListener('click', placeOrder);
+
+    // WebSocket (if you also want live notifications on this page for everyone)
+    const socket = new SockJS('/ws');
+    const stomp = Stomp.over(socket);
+    stomp.connect({}, () => {
+      stomp.subscribe('/topic/order-status', msg => {
+        // You could filter for your own token via separate channel; for demo we show all:
+        console.log('WS:', msg.body);
+        // Optionally show: alert(msg.body);
+      });
+    });
+
+    (async () => { await initCart(); await loadMenu(); })();
+  </script>
+</body>
+</html>
